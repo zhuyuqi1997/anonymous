@@ -35,7 +35,7 @@ export default function HomePage({ onNavigate, onSelectRoom }: HomePageProps) {
             匿名语音吐槽社区
           </p>
           <p className="text-sm text-gray-500 mb-8">
-            按行业分房间 · 3人成团 · 限时20-30分钟 · 每次仅需5元
+            按行业分房间 · 3人成团 · 限时20-30分钟 · 完全免费
           </p>
 
           <button

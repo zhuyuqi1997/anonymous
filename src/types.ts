@@ -16,7 +16,6 @@ export interface Room {
   maxParticipants: number;
   currentParticipants: number;
   duration: number; // minutes
-  price: number;
   status: 'waiting' | 'active' | 'ended';
   tags: string[];
   participants: Participant[];

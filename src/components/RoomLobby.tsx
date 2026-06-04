@@ -13,12 +13,11 @@ export default function RoomLobby({ room, onBack, onStart }: RoomLobbyProps) {
   const [participants, setParticipants] = useState<Participant[]>(room.participants);
   const [me] = useState<Participant>(generateParticipant('me'));
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [showPayment, setShowPayment] = useState(false);
-  const [paid, setPaid] = useState(false);
+  const [joined, setJoined] = useState(false);
 
   const industry = industries.find(i => i.id === room.industryId);
   const allParticipants = [...participants, me];
-  const isReady = allParticipants.length >= 3;
+  const isReady = allParticipants.length >= 3 && joined;
 
   useEffect(() => {
     // Simulate other players joining
@@ -36,10 +35,10 @@ export default function RoomLobby({ room, onBack, onStart }: RoomLobbyProps) {
   }, [participants.length, countdown]);
 
   useEffect(() => {
-    if (isReady && paid && countdown === null) {
+    if (isReady && countdown === null) {
       setCountdown(5);
     }
-  }, [isReady, paid, countdown]);
+  }, [isReady, countdown]);
 
   useEffect(() => {
     if (countdown !== null && countdown > 0) {
@@ -51,12 +50,7 @@ export default function RoomLobby({ room, onBack, onStart }: RoomLobbyProps) {
   }, [countdown, onStart]);
 
   const handleJoin = () => {
-    setShowPayment(true);
-  };
-
-  const handlePay = () => {
-    setShowPayment(false);
-    setPaid(true);
+    setJoined(true);
   };
 
   return (
@@ -71,7 +65,7 @@ export default function RoomLobby({ room, onBack, onStart }: RoomLobbyProps) {
           </button>
           <div className="flex-1">
             <h1 className="text-lg font-bold truncate">{room.name}</h1>
-            <p className="text-xs text-gray-500">{industry?.icon} {industry?.name} · {room.duration}分钟 · ¥{room.price}</p>
+            <p className="text-xs text-gray-500">{industry?.icon} {industry?.name} · {room.duration}分钟</p>
           </div>
         </div>
       </div>
@@ -135,19 +129,18 @@ export default function RoomLobby({ room, onBack, onStart }: RoomLobbyProps) {
 
         {/* Status & Action */}
         <div className="text-center">
-          {!paid ? (
+          {!joined ? (
             <>
-              <div className="mb-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
-                <p className="text-yellow-400 text-sm">
-                  💰 支付 <span className="font-bold text-lg">¥{room.price}</span> 加入房间
+              <div className="mb-4 p-4 bg-purple-500/10 border border-purple-500/20 rounded-xl">
+                <p className="text-purple-400 text-sm">
+                  🎤 3人成团后自动开始，限时{room.duration}分钟
                 </p>
-                <p className="text-yellow-600 text-xs mt-1">3人成团后自动开始，限时{room.duration}分钟</p>
               </div>
               <button
                 onClick={handleJoin}
                 className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-2xl text-lg font-bold shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 hover:scale-[1.02] active:scale-95 transition-all"
               >
-                支付 ¥{room.price} 加入房间
+                🎤 加入房间
               </button>
             </>
           ) : !isReady ? (
@@ -170,68 +163,7 @@ export default function RoomLobby({ room, onBack, onStart }: RoomLobbyProps) {
         </div>
       </div>
 
-      {/* Payment Modal */}
-      {showPayment && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowPayment(false)} />
-          <div className="relative w-full max-w-md bg-[#1a1035] border border-white/10 rounded-t-3xl md:rounded-3xl p-6 animate-slideUp">
-            <div className="hidden md:block absolute top-3 right-3">
-              <button onClick={() => setShowPayment(false)} className="p-1 hover:bg-white/10 rounded-lg">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
 
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 mx-auto bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center text-3xl mb-3">
-                💰
-              </div>
-              <h3 className="text-xl font-bold mb-1">确认支付</h3>
-              <p className="text-gray-400 text-sm">加入「{room.name}」</p>
-            </div>
-
-            <div className="p-4 bg-white/5 rounded-xl mb-4 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">房间费用</span>
-                <span>¥{room.price}.00</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">时长</span>
-                <span>{room.duration}分钟</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">人数</span>
-                <span>{room.maxParticipants}人</span>
-              </div>
-              <div className="border-t border-white/10 pt-2 flex justify-between font-bold">
-                <span>合计</span>
-                <span className="text-yellow-400">¥{room.price}.00</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <button className="p-3 bg-green-600/20 border border-green-500/30 rounded-xl text-green-400 text-sm font-medium flex items-center justify-center gap-2">
-                <span>💚</span> 微信支付
-              </button>
-              <button className="p-3 bg-blue-600/20 border border-blue-500/30 rounded-xl text-blue-400 text-sm font-medium flex items-center justify-center gap-2 opacity-50">
-                <span>💙</span> 支付宝
-              </button>
-            </div>
-
-            <button
-              onClick={handlePay}
-              className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl text-lg font-bold shadow-lg shadow-green-500/30 hover:shadow-green-500/50 active:scale-95 transition-all"
-            >
-              确认支付 ¥{room.price}.00
-            </button>
-
-            <p className="text-center text-xs text-gray-600 mt-3">
-              支付即同意《用户协议》和《隐私政策》
-            </p>
-          </div>
-        </div>
-      )}
 
       <style>{`
         @keyframes fadeIn {

@@ -10,7 +10,9 @@ interface ActiveRoomProps {
 
 export default function ActiveRoom({ room, onEnd }: ActiveRoomProps) {
   const [timeLeft, setTimeLeft] = useState(room.duration * 60);
-  const [micOn, setMicOn] = useState(true);
+  const [micOn, setMicOn] = useState(false);
+  const [isPressing, setIsPressing] = useState(false);
+  const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'pending'>('pending');
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [participants] = useState<Participant[]>(() => {
     const me = generateParticipant('me');
@@ -86,7 +88,11 @@ export default function ActiveRoom({ room, onEnd }: ActiveRoomProps) {
     return () => clearInterval(interval);
   }, [participants]);
 
-  // Initialize SpeechRecognition (if available)
+  // Use a ref to track isPressing so callbacks always have latest value
+  const isPressingRef = useRef(isPressing);
+  useEffect(() => { isPressingRef.current = isPressing; }, [isPressing]);
+
+  // Initialize SpeechRecognition and request mic permission on enter
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -96,90 +102,118 @@ export default function ActiveRoom({ room, onEnd }: ActiveRoomProps) {
     }
     setSrSupported(true);
 
-    const rec = new SpeechRecognition();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = 'zh-CN';
+    let rec: any = null;
 
-    rec.onstart = () => {
-      isRecognizingRef.current = true;
-      setSpeakingId('me');
-      setSrError(null);
-    };
+    // Request microphone permission on enter (but don't start recording)
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      // Stop the stream immediately, we just needed the permission
+      stream.getTracks().forEach(track => track.stop());
+      setMicPermission('granted');
 
-    rec.onend = () => {
-      isRecognizingRef.current = false;
-      setSpeakingId(null);
-      setInterimTranscript('');
-      // auto-restart if mic is still on (handles some browser stop behavior)
-      if (micOn) {
-        try { rec.start(); } catch (e) { /* ignore */ }
-      }
-    };
+      rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'zh-CN';
 
-    rec.onerror = (e: any) => {
-      console.warn('SpeechRecognition error', e);
-      setSrError(e?.error || String(e));
-    };
+      rec.onstart = () => {
+        isRecognizingRef.current = true;
+        setSpeakingId('me');
+        setSrError(null);
+      };
 
-    rec.onresult = (ev: any) => {
-      let interim = '';
-      let final = '';
-      for (let i = ev.resultIndex; i < ev.results.length; ++i) {
-        const res = ev.results[i];
-        if (res.isFinal) final += res[0].transcript;
-        else interim += res[0].transcript;
-      }
+      rec.onend = () => {
+        isRecognizingRef.current = false;
+        setSpeakingId(null);
+        // When recognition ends, finalize any interim text as a sent message
+        setInterimTranscript(prev => {
+          if (prev && prev.trim()) {
+            const me = participants.find(p => p.id === 'me') || participants[0];
+            setChatMessages(msgs => [...msgs.slice(-20), {
+              id: Date.now(),
+              participant: me,
+              text: prev.trim(),
+            }]);
+          }
+          return '';
+        });
+      };
 
-      setInterimTranscript(interim.trim());
+      rec.onerror = (e: any) => {
+        console.warn('SpeechRecognition error', e);
+        if (e?.error !== 'aborted' && e?.error !== 'no-speech') {
+          setSrError(e?.error || String(e));
+        }
+      };
 
-      if (final) {
-        setInterimTranscript('');
-        const me = participants.find(p => p.id === 'me') || participants[0];
-        setChatMessages(prev => [...prev.slice(-20), {
-          id: Date.now(),
-          participant: me,
-          text: final.trim(),
-        }]);
-      }
-    };
+      rec.onresult = (ev: any) => {
+        let interim = '';
+        let final = '';
+        for (let i = ev.resultIndex; i < ev.results.length; ++i) {
+          const res = ev.results[i];
+          if (res.isFinal) final += res[0].transcript;
+          else interim += res[0].transcript;
+        }
 
-    recognitionRef.current = rec;
+        setInterimTranscript(interim.trim());
+
+        if (final) {
+          setInterimTranscript('');
+          const me = participants.find(p => p.id === 'me') || participants[0];
+          setChatMessages(prev => [...prev.slice(-20), {
+            id: Date.now(),
+            participant: me,
+            text: final.trim(),
+          }]);
+        }
+      };
+
+      recognitionRef.current = rec;
+      // Don't auto-start, wait for user to press the button
+    }).catch((err) => {
+      console.warn('Microphone permission denied', err);
+      setMicPermission('denied');
+      setSrError('麦克风权限被拒绝，请在浏览器设置中允许麦克风访问后刷新页面重试。');
+    });
 
     return () => {
-      try { rec.stop(); } catch (e) { /* ignore */ }
+      try { if (rec) rec.stop(); } catch (e) { /* ignore */ }
       recognitionRef.current = null;
     };
-  }, [participants, micOn]);
+  }, [participants]);
 
-  // Start/stop recognition when micOn changes
-  useEffect(() => {
+  // Press-to-talk: start recognition on press, stop on release
+  const handleMicPressStart = useCallback(() => {
+    if (micPermission !== 'granted') {
+      setSrError('请先授予麦克风权限');
+      return;
+    }
+    setIsPressing(true);
+    setMicOn(true);
     const rec = recognitionRef.current;
-    if (!rec) return;
-    if (micOn) {
-      try {
-        if (!isRecognizingRef.current) rec.start();
-      } catch (e) {
-        console.warn('Could not start SpeechRecognition', e);
-        setSrError(String(e));
-      }
-    } else {
+    if (rec && !isRecognizingRef.current) {
+      try { rec.start(); } catch (e) { console.warn('Could not start SR', e); }
+    }
+  }, [micPermission]);
+
+  const handleMicPressEnd = useCallback(() => {
+    setIsPressing(false);
+    setMicOn(false);
+    const rec = recognitionRef.current;
+    if (rec && isRecognizingRef.current) {
       try { rec.stop(); } catch (e) { /* ignore */ }
     }
-  }, [micOn]);
+  }, []);
 
   const handleRetrySR = () => {
     setSrError(null);
-    const rec = recognitionRef.current;
-    if (!rec) return;
-    try {
-      rec.stop();
-    } catch (e) { /* ignore */ }
-    try {
-      rec.start();
-    } catch (e) {
-      setSrError(String(e));
-    }
+    // Re-request permission
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      stream.getTracks().forEach(track => track.stop());
+      setMicPermission('granted');
+    }).catch(() => {
+      setSrError('麦克风权限被拒绝');
+      setMicPermission('denied');
+    });
   };
 
   const handleEnd = useCallback(() => {
@@ -212,10 +246,7 @@ export default function ActiveRoom({ room, onEnd }: ActiveRoomProps) {
               <span className="text-gray-400">吐槽次数</span>
               <span className="font-medium text-purple-400">{chatMessages.length}次</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">费用</span>
-              <span className="font-medium text-yellow-400">¥{room.price}.00</span>
-            </div>
+
           </div>
 
           <div className="mb-6">
@@ -322,10 +353,10 @@ export default function ActiveRoom({ room, onEnd }: ActiveRoomProps) {
                   <span className="mt-2 text-xs font-medium truncate max-w-full">
                     {isMe ? '我' : p.nickname}
                   </span>
-                  {isMe && micOn ? (
-                    <span className="text-xs text-green-400 mt-0.5">🎤 开启</span>
+                  {isMe && isPressing ? (
+                    <span className="text-xs text-green-400 mt-0.5">🎤 说话中...</span>
                   ) : isMe ? (
-                    <span className="text-xs text-red-400 mt-0.5">🎤 静音</span>
+                    <span className="text-xs text-gray-500 mt-0.5">长按说话</span>
                   ) : isSpeaking ? (
                     <span className="text-xs text-purple-400 mt-0.5">说话中...</span>
                   ) : null}
@@ -338,7 +369,7 @@ export default function ActiveRoom({ room, onEnd }: ActiveRoomProps) {
           <div className="p-3 bg-white/5 border border-white/10 rounded-2xl h-48 md:h-64 overflow-y-auto space-y-2">
             {chatMessages.length === 0 ? (
               <div className="h-full flex items-center justify-center">
-                <p className="text-gray-600 text-sm">🎤 开始吐槽吧...</p>
+                <p className="text-gray-600 text-sm">🎤 长按话筒开始吐槽吧...</p>
               </div>
             ) : (
               chatMessages.map((msg) => (
@@ -386,14 +417,19 @@ export default function ActiveRoom({ room, onEnd }: ActiveRoomProps) {
       <div className="sticky bottom-0 bg-[#0f0a1e]/95 backdrop-blur-md border-t border-white/5 px-4 py-4 pb-6 md:pb-4">
         <div className="max-w-2xl mx-auto flex items-center justify-center gap-6">
           <button
-            onClick={() => setMicOn(!micOn)}
-            className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all active:scale-90 ${
-              micOn
-                ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30'
-                : 'bg-red-500/20 border border-red-500/30'
+            onMouseDown={handleMicPressStart}
+            onMouseUp={handleMicPressEnd}
+            onMouseLeave={handleMicPressEnd}
+            onTouchStart={handleMicPressStart}
+            onTouchEnd={handleMicPressEnd}
+            onTouchCancel={handleMicPressEnd}
+            className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all select-none ${
+              isPressing
+                ? 'bg-gradient-to-br from-green-400 to-emerald-600 shadow-lg shadow-green-500/30 scale-110'
+                : 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30'
             }`}
           >
-            {micOn ? '🎤' : '🔇'}
+            🎤
           </button>
 
           <button
@@ -403,6 +439,9 @@ export default function ActiveRoom({ room, onEnd }: ActiveRoomProps) {
             🚪
           </button>
         </div>
+        <p className="text-center text-xs text-gray-500 mt-2">
+          {isPressing ? '松开发送语音' : '长按话筒说话'}
+        </p>
       </div>
 
       {/* End confirm modal */}
